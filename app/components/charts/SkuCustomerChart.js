@@ -5,7 +5,7 @@ ChartJS.register(BarElement, LineElement, PointElement, LinearScale, CategorySca
 
 export default function SkuCustomerChart({ data, options, isLoading }) {
   return (
-    <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 h-80">
+    <div className="w-full h-full">
       {isLoading ? (
         <div className="h-full flex items-center justify-center">Loading...</div>
       ) : (

@@ -20,8 +20,8 @@ export default function PipeContributionPieChart({ data, options, isLoading }) {
      const hasData = data?.datasets?.[0]?.data?.length > 0;
 
     return (
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col">
-            <div className="h-96 relative flex-grow">
+        <div className="bg-white p-6 rounded-lg ">
+            <div className="h-110 relative flex-grow">
                 {isLoading && !hasData && (
                     <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-10">
                         <p>Loading Chart Data...</p>

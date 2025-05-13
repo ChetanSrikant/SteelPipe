@@ -26,7 +26,7 @@ export default function MonthlyCustomerBarChart({ data, options, isLoading, sele
     const noDataForMonth = selectedMonth && allMonthlyCustomerSales && (!allMonthlyCustomerSales[selectedMonth] || Object.keys(allMonthlyCustomerSales[selectedMonth]).length === 0);
 
     return (
-        <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col">
+        <div className="bg-white p-6 rounded-lg flex flex-col">
             {/* Adjusted height slightly, can be tuned */}
             <div className="h-96 md:h-[450px] relative flex-grow">
                 {/* Use hasData for the initial loading check based on processed 'data' prop */}
