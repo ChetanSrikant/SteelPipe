@@ -1,0 +1,812 @@
+"use client";
+import { useState, useRef, useEffect } from 'react';
+// Import necessary icons (Added FiUser, FiRepeat, removed unused FaChartBar)
+import { FiTrendingUp, FiDollarSign, FiUser, FiUsers, FiBox, FiUpload, FiActivity, FiDatabase, FiRepeat } from 'react-icons/fi';
+// import Link from 'next/link'; // Keep if used elsewhere, otherwise remove
+import Sidebar from '../components/Sidebar'; // Adjust path if needed
+import Header from '../components/Header';   // Adjust path if needed
+import * as XLSX from 'xlsx';
+
+// Import Chart Components
+import DailySalesBarChart from '../components/charts/DailySalesBarChart'; // Adjust path as needed
+import PipeContributionPieChart from '../components/charts/PipeContributionPieChart'; // Adjust path as needed
+import MonthlyCustomerBarChart from '../components/charts/MonthlyCustomerBarChart'; // Adjust path as needed
+
+// --- Helper for Number Formatting ---
+// Formats a number as currency (e.g., ₹1,23,456)
+// Adjust 'en-IN' and 'INR' based on your desired currency and locale
+const formatCurrency = (value) => {
+    if (typeof value !== 'number' || isNaN(value)) return 'N/A'; // Handle non-numbers and NaN
+    // Ensure it always shows currency symbol, even for 0
+    return value.toLocaleString('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 0 });
+};
+
+// Formats a simple number with commas (e.g., 1,234)
+const formatCount = (value) => {
+    if (typeof value !== 'number' || isNaN(value)) return 'N/A';
+    return value.toLocaleString('en-IN');
+}
+
+// --- Default Chart Options ---
+// Options for the daily total sales bar chart
+const defaultBarChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: { display: true, position: 'bottom' },
+        title: { display: true, text: 'Total Daily Sales (Upload File)' },
+        tooltip: {
+            mode: 'index', intersect: false,
+            callbacks: {
+                label: function (context) {
+                    let label = context.dataset.label || '';
+                    if (label) {
+                        label += ': ';
+                    }
+                    if (context.parsed.y !== null) {
+                        label += formatCurrency(context.parsed.y);
+                    }
+                    return label;
+                }
+            }
+        },
+    },
+    scales: {
+        x: { title: { display: true, text: 'Day of the Month' } },
+        y: {
+            title: { display: true, text: 'Total Sales Value' },
+            beginAtZero: true,
+            ticks: { // Format y-axis ticks
+                callback: function (value, index, values) {
+                    return formatCurrency(value); // Use consistent formatting
+                }
+            }
+        },
+    },
+};
+
+// Options for the pipe contribution pie chart
+const defaultPieChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: { position: 'top' },
+        title: { display: true, text: 'Pipe Contribution (Upload File)' },
+        tooltip: {
+            callbacks: {
+                // Custom tooltip label to show value and percentage
+                label: function (context) {
+                    let label = context.label || '';
+                    if (label) {
+                        label += ': ';
+                    }
+                    if (context.parsed !== null) {
+                        const total = context.chart.getDatasetMeta(0).total;
+                        const value = context.parsed;
+                        // Calculate percentage safely
+                        const percentage = total > 0 ? ((value / total) * 100).toFixed(1) + '%' : '0.0%';
+                        label += `${formatCurrency(value)} (${percentage})`; // Use currency formatting
+                    }
+                    return label;
+                }
+            }
+        }
+    }
+};
+
+// Options for the top customers horizontal bar chart
+const defaultCustomerChartOptions = {
+    indexAxis: 'y', // Makes the bar chart horizontal
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: { display: false }, // Usually hide legend for top N charts
+        title: { display: true, text: 'Top Customers by Sales Value (Upload File & Select Month)' },
+        tooltip: {
+            mode: 'index', intersect: false,
+             callbacks: {
+                label: function (context) {
+                    let label = context.dataset.label || '';
+                    if (label) {
+                        label += ': ';
+                    }
+                    // For horizontal bar, the value is on the x-axis
+                    if (context.parsed.x !== null) {
+                        label += formatCurrency(context.parsed.x);
+                    }
+                    return label;
+                }
+            }
+        },
+    },
+    scales: {
+        x: {
+            title: { display: true, text: 'Total Sales Value for Month' },
+            beginAtZero: true,
+            ticks: { // Format x-axis ticks for horizontal bar
+                callback: function (value, index, values) {
+                    return formatCurrency(value); // Use consistent formatting
+                }
+            }
+        },
+        y: { title: { display: true, text: 'Customer' } },
+    },
+};
+
+
+// --- Default Chart Data (Placeholders before file upload) ---
+const defaultBarChartData = {
+    labels: ['Upload File and Select Month'],
+    datasets: [{ label: 'Total Sales', data: [], backgroundColor: 'rgba(54, 162, 235, 0.6)' }]
+};
+
+const defaultPieChartData = {
+    labels: ['Upload File and Select Month'],
+    datasets: [{
+        label: 'Sales Contribution',
+        data: [],
+        backgroundColor: [],
+        borderColor: [],
+        borderWidth: 1
+    }]
+};
+
+const defaultCustomerChartData = {
+    labels: ['Upload File & Select Month'],
+    datasets: [{ label: 'Total Sales Value', data: [], backgroundColor: 'rgba(75, 192, 192, 0.6)' }]
+};
+
+
+// --- Helper function for generating distinct colors for charts ---
+const generateColors = (numColors) => {
+    const colors = [];
+    // Base color palette
+    const baseColors = [
+        'rgba(255, 99, 132, 0.7)', 'rgba(54, 162, 235, 0.7)', 'rgba(255, 206, 86, 0.7)',
+        'rgba(75, 192, 192, 0.7)', 'rgba(153, 102, 255, 0.7)', 'rgba(255, 159, 64, 0.7)',
+        'rgba(199, 199, 199, 0.7)', 'rgba(83, 102, 255, 0.7)', 'rgba(100, 255, 100, 0.7)',
+        'rgba(255, 100, 100, 0.7)'
+    ];
+    // Cycle through base colors if more colors are needed than available
+    for (let i = 0; i < numColors; i++) {
+        colors.push(baseColors[i % baseColors.length]);
+    }
+    return colors;
+};
+
+// --- *** ADDED: findTopItem Helper Function *** ---
+/**
+ * Finds the item with the highest value in an object.
+ * @param {object | null | undefined} dataObject - Object where keys are names and values are numbers (e.g., sales, counts).
+ * @param {'Sales' | 'Value'} valueType - Type of value for formatting ('Sales' for currency, 'Value' for count).
+ * @param {string} unitLabel - Optional label for the unit (e.g., 'Appearances', 'Units'). Defaults to valueType.
+ * @returns {{name: string, value: number | string, details: string}} - Object with name, formatted value, and details string.
+ */
+const findTopItem = (dataObject, valueType = 'Sales', unitLabel = '') => {
+    if (!dataObject || typeof dataObject !== 'object' || Object.keys(dataObject).length === 0) {
+        return { name: 'N/A', value: 'N/A', details: 'No data available' };
+    }
+
+    let topName = 'N/A';
+    let topValue = -Infinity;
+
+    for (const [name, value] of Object.entries(dataObject)) {
+        const numericValue = Number(value);
+        if (!isNaN(numericValue) && numericValue > topValue) {
+            topValue = numericValue;
+            topName = name;
+        }
+    }
+
+    if (topName === 'N/A' || topValue === -Infinity) {
+         return { name: 'N/A', value: 'N/A', details: 'No valid data found' };
+    }
+
+    const formattedValue = valueType === 'Sales' ? formatCurrency(topValue) : formatCount(topValue);
+    const label = unitLabel || valueType; // Use provided unitLabel or default to valueType
+
+    return {
+        name: topName,
+        value: topValue, // Keep raw value for potential other uses if needed
+        details: `${formattedValue}${label ? ` (${label})` : ''}` // Add unit label if provided
+    };
+};
+
+// --- *** ADDED: Initial Dashboard Stats Structure *** ---
+const initialDashboardStats = [
+    { id: 'totalSales', title: "Total Sales", value: "N/A", icon: <FiTrendingUp className="text-blue-500" />, details: "Upload & Select Sheet" },
+    { id: 'topCustomer', title: "Top Customer", value: "N/A", icon: <FiUser className="text-orange-500" />, details: "Upload & Select Sheet" },
+    { id: 'topPipe', title: "Top Pipe", value: "N/A", icon: <FiDatabase className="text-green-500" />, details: "Upload & Select Sheet" },
+    { id: 'freqCustomer', title: "Most Frequent Customer", value: "N/A", icon: <FiRepeat className="text-red-500" />, details: "Upload & Select Sheet" },
+];
+
+
+// --- Main Dashboard Component ---
+export default function DashboardPage() {
+    // --- State Variables ---
+    // Raw data extracted from the Excel file
+    const [rawPipeSalesData, setRawPipeSalesData] = useState(null); // Holds { 'Daily Total': { Month: [...] }, 'MonthlyPipeTotals': { Month: { Pipe: Value } } }
+    const [allMonthlyCustomerSales, setAllMonthlyCustomerSales] = useState({}); // Holds { Month: { Customer: Value } }
+    // *** ADDED State ***
+    const [allCustomerFrequency, setAllCustomerFrequency] = useState({}); // Holds { Month: { Customer: Count } }
+
+    // List of months found in the uploaded file
+    const [availableMonths, setAvailableMonths] = useState([]);
+    // Currently selected month from the dropdown
+    const [selectedMonth, setSelectedMonth] = useState('');
+
+    // State for each chart's data and options
+    const [barChartData, setBarChartData] = useState(defaultBarChartData);
+    const [barChartOptions, setBarChartOptions] = useState(defaultBarChartOptions);
+    const [pieChartData, setPieChartData] = useState(defaultPieChartData);
+    const [pieChartOptions, setPieChartOptions] = useState(defaultPieChartOptions);
+    const [customerChartData, setCustomerChartData] = useState(defaultCustomerChartData);
+    const [customerChartOptions, setCustomerChartOptions] = useState(defaultCustomerChartOptions);
+
+    // *** ADDED State for consolidated stats ***
+    const [dashboardStats, setDashboardStats] = useState(initialDashboardStats);
+
+    // UI state
+    const [isLoading, setIsLoading] = useState(false); // Tracks file processing state
+    const [errorMsg, setErrorMsg] = useState('');     // Stores any processing errors
+    const fileInputRef = useRef(null); // Reference to the hidden file input element
+
+    // --- File Processing Logic ---
+    const handleFileChange = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        // Reset states
+        setIsLoading(true);
+        setErrorMsg('');
+        setRawPipeSalesData(null);
+        setAllMonthlyCustomerSales({});
+        setAllCustomerFrequency({}); // Reset NEW Frequency State
+        setAvailableMonths([]);
+        setSelectedMonth('');
+        setDashboardStats(initialDashboardStats); // Reset Dashboard Stats using defined initial state
+        // Reset charts
+        setBarChartData(defaultBarChartData);
+        setBarChartOptions(defaultBarChartOptions);
+        setPieChartData(defaultPieChartData);
+        setPieChartOptions(defaultPieChartOptions);
+        setCustomerChartData(defaultCustomerChartData);
+        setCustomerChartOptions(defaultCustomerChartOptions);
+
+        if (!/\.(xlsx|xls|xlsm)$/i.test(file.name)) {
+            setErrorMsg('Please upload a valid Excel file (.xlsx, .xls, .xlsm).');
+            setIsLoading(false);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const arrayBuffer = e.target.result;
+                const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+
+                const intermediateData = {
+                    'Daily Total': {},
+                    'MonthlyPipeTotals': {}
+                };
+                const customerTotalsByMonth = {};
+                const customerFrequencyBySheet = {}; // Initialize Frequency Storage
+                const sheetsFound = [];
+                let processedAnyData = false; // Flag to check if any sheet yielded data
+
+                workbook.SheetNames.forEach(sheetName => {
+                    sheetsFound.push(sheetName); // Add the actual sheet name
+
+                    const worksheet = workbook.Sheets[sheetName];
+                    // Ensure empty cells are read as null or specific value if needed, defval "" is fine for now
+                    const sheetData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+
+                    if (sheetData.length < 2) {
+                        console.warn(`Sheet "${sheetName}" has less than 2 rows. Skipping data processing for this sheet.`);
+                        return; // Skip processing data for this sheet
+                    };
+
+                    // Determine data range more robustly
+                    let maxCols = 0;
+                    if (Array.isArray(sheetData[0])) {
+                         maxCols = sheetData[0].length;
+                    }
+                    // If header is short, check first few data rows
+                    if (maxCols < 3) {
+                         maxCols = sheetData
+                            .slice(1, 11) // Check first 10 data rows
+                            .reduce((max, row) => Array.isArray(row) ? Math.max(max, row.length) : max, 0);
+                    }
+
+
+                    // Assumption: Col A (0): Pipe, Col B (1): Customer, Col C (2 onwards): Daily Sales
+                    // Find the last column that potentially contains a numeric header (day number) or data
+                    let lastDataColIndex = -1;
+                     for(let c = maxCols - 1; c >= 2; c--) {
+                        // Check header or first few data rows for numeric values
+                        const headerVal = sheetData[0]?.[c];
+                        const isHeaderNumeric = headerVal !== undefined && headerVal !== "" && !isNaN(Number(headerVal));
+                        const isDataNumeric = sheetData.slice(1, 6).some(row => row?.[c] !== undefined && row?.[c] !== "" && !isNaN(Number(row[c])));
+
+                        if (isHeaderNumeric || isDataNumeric) {
+                             // Check if it's likely a 'Total' column based on header text
+                             const headerText = String(headerVal).trim().toLowerCase();
+                             if (headerText !== 'total' && headerText !== 'sum' && headerText !== 'grand total') {
+                                lastDataColIndex = c;
+                                break; // Found the last valid data column
+                             }
+                        }
+                     }
+
+
+                    if (lastDataColIndex < 2) {
+                        console.warn(`Sheet "${sheetName}" doesn't seem to have enough columns for Pipe (A), Customer (B), and valid Sales (C onwards). Determined last data column index: ${lastDataColIndex}. Skipping data processing.`);
+                        return;
+                    }
+
+                    console.log(`Sheet "${sheetName}": Processing columns up to index ${lastDataColIndex}`);
+
+
+                    // Initialize containers for this sheet's data
+                    const dailyTotalsForSheet = {};
+                    const pipeTotalsForSheet = {};
+                    const customerTotalsForSheet = {};
+                    const customerFrequencyForSheet = {}; // Initialize Frequency for THIS sheet
+                    let processedSheetData = false; // Flag specific to this sheet
+
+                    for (let rowIndex = 1; rowIndex < sheetData.length; rowIndex++) {
+                        const row = sheetData[rowIndex];
+                        // Ensure row is an array and has data up to the expected columns
+                        if (!Array.isArray(row) || row.length <= Math.max(1, lastDataColIndex)) continue;
+
+                        const pipeName = row[0]?.toString().trim();
+                        const customerName = row[1]?.toString().trim();
+
+                        if (!pipeName || !customerName) continue; // Need both for processing rows now
+
+                        // *** Calculate Frequency ***
+                        // Count only if there's potential sales data in the row
+                        const hasPotentialSales = row.slice(2, lastDataColIndex + 1).some(val => val !== "" && val !== null && val !== undefined);
+                         if (hasPotentialSales) {
+                              customerFrequencyForSheet[customerName] = (customerFrequencyForSheet[customerName] || 0) + 1;
+                         }
+
+
+                        let rowHasActualSales = false;
+                        let rowTotalSales = 0;
+
+                        // Process daily sales for the row
+                        for (let dayIndex = 0; dayIndex <= (lastDataColIndex - 2); dayIndex++) {
+                             const colIndex = dayIndex + 2;
+                             const val = row[colIndex];
+                             const sale = (val === null || val === undefined || val === "") ? 0 : Number(val);
+
+                             if (!isNaN(sale) && sale > 0) {
+                                const day = dayIndex + 1;
+                                dailyTotalsForSheet[day] = (dailyTotalsForSheet[day] || 0) + sale;
+                                rowTotalSales += sale;
+                                rowHasActualSales = true; // Mark if any valid sale occurred in the row
+                             } else if (isNaN(sale) && val !== "") {
+                                // Optionally log invalid numeric data
+                                // console.warn(`Invalid numeric value "${val}" in sheet "${sheetName}", row ${rowIndex + 1}, column ${colIndex + 1}`);
+                             }
+                        }
+
+
+                        if (rowHasActualSales) {
+                             processedSheetData = true; // Mark that we found processable data in this sheet
+
+                             // Accumulate Pipe Totals only if sales > 0 for the row
+                             pipeTotalsForSheet[pipeName] = (pipeTotalsForSheet[pipeName] || 0) + rowTotalSales;
+
+                             // Accumulate Customer Total only if sales > 0 for the row
+                             customerTotalsForSheet[customerName] = (customerTotalsForSheet[customerName] || 0) + rowTotalSales;
+                        }
+                    } // End row loop
+
+                    // Store calculated totals *only if data was processed for this sheet*
+                    if (processedSheetData) {
+                        processedAnyData = true; // Mark that at least one sheet had data
+                        if (Object.keys(dailyTotalsForSheet).length > 0) {
+                            const maxDay = Math.max(...Object.keys(dailyTotalsForSheet).map(Number));
+                            const dailyTotalsArray = Array(maxDay).fill(0);
+                            for (const day in dailyTotalsForSheet) {
+                                dailyTotalsArray[parseInt(day) - 1] = dailyTotalsForSheet[day];
+                            }
+                            intermediateData['Daily Total'][sheetName] = dailyTotalsArray;
+                        } else {
+                             intermediateData['Daily Total'][sheetName] = []; // Store empty array if no daily totals but sheet was processed
+                        }
+
+                        if (Object.keys(pipeTotalsForSheet).length > 0) {
+                            intermediateData['MonthlyPipeTotals'][sheetName] = pipeTotalsForSheet;
+                        }
+
+                        if (Object.keys(customerTotalsForSheet).length > 0) {
+                            customerTotalsByMonth[sheetName] = customerTotalsForSheet;
+                        }
+
+                        // Store Frequency Data
+                        if (Object.keys(customerFrequencyForSheet).length > 0) {
+                            customerFrequencyBySheet[sheetName] = customerFrequencyForSheet;
+                        }
+
+                    } else {
+                         console.warn(`Sheet "${sheetName}" was processed, but no valid data rows (Pipe, Customer, Sales > 0) were found.`);
+                    }
+
+                }); // End sheet loop
+
+                if (!processedAnyData) {
+                    throw new Error("No sheets with processable sales data found. Ensure at least one sheet has Pipe (Col A), Customer (Col B), and numeric daily sales > 0 (Col C onwards).");
+                }
+
+                // Use the actual sheet names found that contained processed data
+                 // Filter the original sheetsFound list to only include those where we stored data
+                const availableSheetsWithData = sheetsFound.filter(name =>
+                     intermediateData['Daily Total'].hasOwnProperty(name) ||
+                     intermediateData['MonthlyPipeTotals'].hasOwnProperty(name) ||
+                     customerTotalsByMonth.hasOwnProperty(name) ||
+                     customerFrequencyBySheet.hasOwnProperty(name)
+                 );
+
+
+                setRawPipeSalesData(intermediateData);
+                setAllMonthlyCustomerSales(customerTotalsByMonth);
+                setAllCustomerFrequency(customerFrequencyBySheet); // SET Frequency State
+                setAvailableMonths(availableSheetsWithData); // Only show sheets with data
+                setSelectedMonth(availableSheetsWithData[0] || ''); // Select the first sheet with data
+                setErrorMsg('');
+
+            } catch (error) {
+                console.error("Error processing Excel file:", error);
+                setErrorMsg(`Error processing file: ${error.message}. Please check file contents and format.`);
+                // Reset all data states on error
+                setRawPipeSalesData(null);
+                setAllMonthlyCustomerSales({});
+                setAllCustomerFrequency({}); // Reset Frequency State
+                setAvailableMonths([]);
+                setSelectedMonth('');
+                setDashboardStats(initialDashboardStats); // Reset Dashboard Stats
+                // Reset charts...
+                setBarChartData(defaultBarChartData);
+                setBarChartOptions(defaultBarChartOptions);
+                setPieChartData(defaultPieChartData);
+                setPieChartOptions(defaultPieChartOptions);
+                setCustomerChartData(defaultCustomerChartData);
+                setCustomerChartOptions(defaultCustomerChartOptions);
+            } finally {
+                setIsLoading(false);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+            }
+        }; // End reader.onload
+
+        reader.onerror = (error) => {
+            console.error("Error reading file:", error);
+            setErrorMsg("Error reading file.");
+            setIsLoading(false);
+            // Reset all data states on read error
+             setRawPipeSalesData(null);
+             setAllMonthlyCustomerSales({});
+             setAllCustomerFrequency({}); // Reset Frequency State
+             setAvailableMonths([]);
+             setSelectedMonth('');
+             setDashboardStats(initialDashboardStats); // Reset Dashboard Stats
+             // Reset charts...
+             setBarChartData(defaultBarChartData);
+             setBarChartOptions(defaultBarChartOptions);
+             setPieChartData(defaultPieChartData);
+             setPieChartOptions(defaultPieChartOptions);
+             setCustomerChartData(defaultCustomerChartData);
+             setCustomerChartOptions(defaultCustomerChartOptions);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+        };
+
+        reader.readAsArrayBuffer(file);
+    };
+
+    // --- Effect to Update Charts AND STATS when data or selection changes ---
+    useEffect(() => {
+        const sheetIsSelected = selectedMonth && availableMonths.includes(selectedMonth);
+        let newDashboardStats = [...initialDashboardStats]; // Start with initial structure
+
+        // Set initial state text based on whether data is loaded
+        const detailText = rawPipeSalesData ? (selectedMonth ? `Sheet: ${selectedMonth}` : "Select Sheet") : "Upload & Select Sheet";
+         // Update details placeholder initially
+        newDashboardStats = newDashboardStats.map(stat => ({ ...stat, details: detailText, value: "N/A" }));
+
+
+        if (sheetIsSelected && rawPipeSalesData && allMonthlyCustomerSales && allCustomerFrequency) {
+            const dailyTotals = rawPipeSalesData['Daily Total']?.[selectedMonth];
+            const pipeTotals = rawPipeSalesData['MonthlyPipeTotals']?.[selectedMonth];
+            const customerTotals = allMonthlyCustomerSales?.[selectedMonth];
+            const customerFreq = allCustomerFrequency?.[selectedMonth]; // Get frequency data
+
+
+            // --- Calculate Stats ---
+            let totalSalesValue = 0;
+            if (pipeTotals && typeof pipeTotals === 'object') {
+                 totalSalesValue = Object.values(pipeTotals).reduce((sum, value) => sum + (Number(value) || 0), 0);
+            } else if (dailyTotals && Array.isArray(dailyTotals)) {
+                // Fallback if pipeTotals is missing but dailyTotals exist
+                totalSalesValue = dailyTotals.reduce((sum, value) => sum + (Number(value) || 0), 0);
+            }
+
+            // Use the defined findTopItem function
+            const topCustomerData = findTopItem(customerTotals, "Sales"); // Value is Currency
+            const topPipeData = findTopItem(pipeTotals, "Sales");         // Value is Currency
+            const freqCustomerData = findTopItem(customerFreq, "Value", "Entries"); // Value is Count, unit is 'Entries'
+
+
+            // --- Update Stats Array ---
+            // Directly map over the initial structure to update values/details
+            newDashboardStats = initialDashboardStats.map(stat => {
+                 switch (stat.id) {
+                     case 'totalSales':
+                         return { ...stat, value: formatCurrency(totalSalesValue), details: `Sheet: ${selectedMonth}` };
+                     case 'topCustomer':
+                         return { ...stat, value: topCustomerData.name, details: topCustomerData.details };
+                     case 'topPipe':
+                         return { ...stat, value: topPipeData.name, details: topPipeData.details };
+                     case 'freqCustomer':
+                         return { ...stat, value: freqCustomerData.name, details: freqCustomerData.details };
+                     default:
+                         return stat;
+                 }
+            });
+
+
+            // --- Update Bar Chart ---
+            if (Array.isArray(dailyTotals) && dailyTotals.length > 0) {
+                const maxDays = dailyTotals.length;
+                const dayLabels = Array.from({ length: maxDays }, (_, i) => `${i + 1}`);
+                setBarChartData({
+                    labels: dayLabels,
+                    datasets: [{
+                        label: 'Total Sales', data: dailyTotals, borderWidth: 1,
+                        backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                        borderColor: 'rgba(54, 162, 235, 1)', // Added border color
+                    }],
+                });
+                setBarChartOptions(prev => ({
+                    ...prev, // Keep existing options like responsiveness
+                    plugins: {
+                        ...prev.plugins,
+                         title: { display: true, text: `Total Daily Sales - ${selectedMonth}` }
+                    },
+                    // Scales are already configured with formatting in default options
+                }));
+            } else {
+                setBarChartData({ labels: [`No Daily Data for ${selectedMonth}`], datasets: [{ label: 'Total Sales', data: [], backgroundColor: 'rgba(54, 162, 235, 0.6)' }] });
+                 setBarChartOptions(prev => ({
+                    ...prev,
+                    plugins: { ...prev.plugins, title: { display: true, text: `Total Daily Sales - ${selectedMonth}` } }
+                 }));
+            }
+
+            // --- Update Pie Chart ---
+            if (pipeTotals && Object.keys(pipeTotals).length > 0) {
+                const pipeLabels = Object.keys(pipeTotals);
+                const pipeSalesValues = Object.values(pipeTotals);
+                const backgroundColors = generateColors(pipeLabels.length);
+                const borderColors = backgroundColors.map(color => color.replace(/rgba\((\d+,\s*\d+,\s*\d+),.*?\)/, 'rgba($1, 1)')); // Make border opaque
+
+                setPieChartData({
+                    labels: pipeLabels,
+                    datasets: [{
+                        label: 'Sales Contribution', data: pipeSalesValues,
+                        backgroundColor: backgroundColors, borderColor: borderColors, borderWidth: 1,
+                    }],
+                });
+                 setPieChartOptions(prev => ({
+                    ...prev, // Keep existing options
+                    plugins: {
+                        ...prev.plugins,
+                         title: { display: true, text: `Pipe Contribution - ${selectedMonth}` }
+                    },
+                 }));
+            } else {
+                setPieChartData({ labels: [`No Pipe Data for ${selectedMonth}`], datasets: [{ label: 'Sales Contribution', data: [] }] });
+                 setPieChartOptions(prev => ({
+                    ...prev,
+                    plugins: { ...prev.plugins, title: { display: true, text: `Pipe Contribution - ${selectedMonth}` } }
+                 }));
+            }
+
+            // --- Update Customer Chart ---
+            if (customerTotals && Object.keys(customerTotals).length > 0) {
+                const sortedCustomers = Object.entries(customerTotals)
+                    .sort(([, a], [, b]) => b - a) // Sort descending by sales value
+                    .slice(0, 15); // Take top 15
+
+                const customerLabels = sortedCustomers.map(([name]) => name);
+                const customerValues = sortedCustomers.map(([, value]) => value);
+                const backgroundColors = generateColors(customerLabels.length).map(c => c.replace('0.7','0.6'));
+                const borderColors = backgroundColors.map(color => color.replace(/rgba\((\d+,\s*\d+,\s*\d+),.*?\)/, 'rgba($1, 1)')); // Make border opaque
+
+
+                setCustomerChartData({
+                    labels: customerLabels,
+                    datasets: [{
+                        label: 'Monthly Sales Value',
+                        data: customerValues,
+                        backgroundColor: backgroundColors,
+                        borderColor: borderColors,
+                        borderWidth: 1,
+                    }],
+                });
+                 setCustomerChartOptions(prev => ({
+                     ...prev, // Keep existing options
+                     plugins: {
+                        ...prev.plugins,
+                         title: { display: true, text: `Top ${customerLabels.length} Customers - ${selectedMonth}` }
+                    },
+                    // Scales are already configured with formatting in default options
+                 }));
+            } else {
+                setCustomerChartData({ labels: [`No Customer Data for ${selectedMonth}`], datasets: [{ label: 'Monthly Sales Value', data: [] }] });
+                setCustomerChartOptions(prev => ({
+                     ...prev,
+                     plugins: {
+                        ...prev.plugins,
+                         title: { display: true, text: `Top Customers - ${selectedMonth}` }
+                    },
+                    // Scales already have formatting, keep them
+                }));
+            }
+
+        } else {
+            // Reset charts if no valid sheet selected or data missing after load
+            setBarChartData(defaultBarChartData);
+            setBarChartOptions(defaultBarChartOptions);
+            setPieChartData(defaultPieChartData);
+            setPieChartOptions(defaultPieChartOptions);
+            setCustomerChartData(defaultCustomerChartData);
+            setCustomerChartOptions(defaultCustomerChartOptions);
+            // Ensure stats show appropriate placeholder text if selection is invalid/missing
+            // The initial mapping already handles this case
+        }
+
+        // --- Set the final state for stats ---
+        setDashboardStats(newDashboardStats); // Update the single source of truth for stats display
+
+    // Ensure all dependencies used inside are listed
+    }, [selectedMonth, rawPipeSalesData, availableMonths, allMonthlyCustomerSales, allCustomerFrequency]);
+
+
+    // --- Event Handlers ---
+    // Trigger the hidden file input click
+    const handleUploadClick = () => {
+        setErrorMsg(''); // Clear previous errors on new upload attempt
+        fileInputRef.current?.click();
+    };
+
+    // Update state when the month dropdown selection changes
+    const handleMonthChange = (event) => {
+        setSelectedMonth(event.target.value);
+        // Calculations and chart updates are handled by the useEffect hook
+    };
+
+    // --- Render Component JSX ---
+    return (
+        // Main layout container
+        <div className="flex min-h-screen bg-gray-100 dark:bg-gray-900"> {/* Adjusted bg color */}
+            {/* Sidebar Component */}
+            <Sidebar />
+
+            {/* Main Content Area */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+                {/* Header Component */}
+                <Header />
+
+                {/* Scrollable main content */}
+                <main className="flex-1 overflow-x-hidden overflow-y-auto bg-gray-100 dark:bg-gray-900 p-6"> {/* Added padding */}
+                    <div className="container mx-auto">
+                        {/* Header Section: Title, Upload, Dropdown */}
+                        <div className="mb-6 flex flex-col sm:flex-row justify-between items-center gap-4">
+                            <h1 className="text-2xl font-semibold text-gray-700 dark:text-gray-200">Sales Dashboard</h1>
+                            <div className="flex flex-col sm:flex-row items-center gap-4">
+                                {/* Hidden File Input */}
+                                <input
+                                    type="file"
+                                    ref={fileInputRef}
+                                    onChange={handleFileChange}
+                                    accept=".xlsx, .xls, .xlsm" // Be specific about accepted types
+                                    style={{ display: 'none' }}
+                                    disabled={isLoading}
+                                />
+                                {/* Upload Button */}
+                                <button
+                                    onClick={handleUploadClick}
+                                    disabled={isLoading}
+                                    className={`flex items-center px-4 py-2 text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors duration-150 ease-in-out ${isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'}`}
+                                >
+                                    {isLoading ? (
+                                        <>
+                                            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                            Processing...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <FiUpload className="w-5 h-5 mr-2" />
+                                            Upload Excel
+                                        </>
+                                    )}
+                                </button>
+
+                                {/* Month Selector Dropdown */}
+                                {availableMonths.length > 0 && (
+                                    <select
+                                        value={selectedMonth}
+                                        onChange={handleMonthChange}
+                                        disabled={isLoading}
+                                        className="px-4 py-2 border rounded-md bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
+                                    >
+                                        <option value="" disabled>Select Sheet/Month</option>
+                                        {availableMonths.map(month => (
+                                            <option key={month} value={month}>{month}</option>
+                                        ))}
+                                    </select>
+                                )}
+                            </div>
+                        </div>
+
+                         {/* Error Message Display */}
+                        {errorMsg && (
+                            <div className="mb-4 p-4 text-sm text-red-700 bg-red-100 rounded-lg dark:bg-red-200 dark:text-red-800" role="alert">
+                                <span className="font-medium">Error!</span> {errorMsg}
+                            </div>
+                        )}
+
+                        {/* Stats Cards Section */}
+                        {/* Render using the dashboardStats state */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+                            {dashboardStats.map((stat) => (
+                                <div key={stat.id} className="bg-white dark:bg-gray-800 shadow-lg rounded-lg p-5 flex items-center space-x-4">
+                                    <div className={`p-3 rounded-full ${stat.icon.props.className?.includes('blue') ? 'bg-blue-100 dark:bg-blue-900' : stat.icon.props.className?.includes('orange') ? 'bg-orange-100 dark:bg-orange-900' : stat.icon.props.className?.includes('green') ? 'bg-green-100 dark:bg-green-900' : 'bg-red-100 dark:bg-red-900'}`}>
+                                        {stat.icon}
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate" title={stat.title}>{stat.title}</p>
+                                        <p className="text-xl font-semibold text-gray-800 dark:text-gray-100 truncate" title={stat.value}>{stat.value}</p>
+                                        <p className="text-xs text-gray-400 dark:text-gray-500 truncate" title={stat.details}>{stat.details}</p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+
+                         {/* Charts Section */}
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+                             {/* Daily Sales Bar Chart */}
+                             <div className="bg-white dark:bg-gray-800 shadow-lg rounded-lg p-4">
+                                 <div className="h-96"> {/* Ensure chart has height */}
+                                     <DailySalesBarChart options={barChartOptions} data={barChartData} />
+                                 </div>
+                             </div>
+
+                             {/* Pipe Contribution Pie Chart */}
+                              <div className="bg-white dark:bg-gray-800 shadow-lg rounded-lg p-4">
+                                 <div className="h-96"> {/* Ensure chart has height */}
+                                    <PipeContributionPieChart options={pieChartOptions} data={pieChartData} />
+                                 </div>
+                             </div>
+                        </div>
+
+                        {/* Top Customers Chart - Full Width */}
+                        <div className="bg-white dark:bg-gray-800 shadow-lg rounded-lg p-4">
+                             <div className="h-96 md:h-[32rem]"> {/* Allow more height for horizontal bar */}
+                                 <MonthlyCustomerBarChart options={customerChartOptions} data={customerChartData} />
+                             </div>
+                        </div>
+
+                    </div>
+                </main> {/* *** CLOSED main tag *** */}
+            </div>
+        </div>
+    );
+}

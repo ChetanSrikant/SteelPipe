@@ -1,0 +1,724 @@
+"use client";
+import { useState, useRef, useEffect } from 'react';
+import { FiTrendingUp, FiDollarSign, FiUsers, FiBox, FiUpload, FiActivity, FiDatabase } from 'react-icons/fi';
+import { FaChartBar, FaChartLine } from 'react-icons/fa';
+import Link from 'next/link';
+import Sidebar from '../components/Sidebar';
+import Header from '../components/Header';
+import * as XLSX from 'xlsx';
+
+// Import Chart Components
+import DailySalesBarChart from '../components/charts/DailySalesBarChart';
+import PipeContributionPieChart from '../components/charts/PipeContributionPieChart';
+import MonthlyCustomerBarChart from '../components/charts/MonthlyCustomerBarChart';
+import SheetSalesTrendChart from '../components/charts/SheetSalesTrendChart'; // New component
+
+// --- Default Chart Options ---
+const defaultBarChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: { display: true, position: 'bottom' },
+        title: { display: true, text: 'Total Daily Pipe Sales (Upload File)' },
+        tooltip: { mode: 'index', intersect: false },
+    },
+    scales: {
+        x: { title: { display: true, text: 'Day of the Month' } },
+        y: { title: { display: true, text: 'Total Sales Value' }, beginAtZero: true },
+    },
+};
+
+const defaultPieChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: { position: 'top' },
+        title: { display: true, text: 'Pipe Contribution (Upload File)' },
+        tooltip: {
+            callbacks: {
+                label: function (context) {
+                    let label = context.label || '';
+                    if (label) {
+                        label += ': ';
+                    }
+                    if (context.parsed !== null) {
+                        const total = context.chart.getDatasetMeta(0).total;
+                        const value = context.parsed;
+                        const percentage = total > 0 ? ((value / total) * 100).toFixed(1) + '%' : '0.0%';
+                        label += `${formatCurrency(value)} (${percentage})`;
+                    }
+                    return label;
+                }
+            }
+        }
+    }
+};
+
+const defaultCustomerChartOptions = {
+    indexAxis: 'y',
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: { display: false },
+        title: { display: true, text: 'Top Customers by Sales Value (Upload File & Select Sheet)' },
+        tooltip: { mode: 'index', intersect: false },
+    },
+    scales: {
+        x: { title: { display: true, text: 'Total Sales Value' }, beginAtZero: true },
+        y: { title: { display: true, text: 'Customer' } },
+    },
+};
+
+// New line chart options
+const defaultLineChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: { display: true, position: 'bottom' },
+        title: { display: true, text: 'Total Sales Trend Across Sheets' },
+        tooltip: { mode: 'index', intersect: false },
+    },
+    scales: {
+        x: { title: { display: true, text: 'Sheet' } },
+        y: { title: { display: true, text: 'Total Sales Value' }, beginAtZero: true }
+    }
+};
+
+// --- Default Chart Data ---
+const defaultBarChartData = {
+    labels: ['Upload File and Select Sheet'],
+    datasets: [{ label: 'Total Sales', data: [], backgroundColor: 'rgba(54, 162, 235, 0.6)' }]
+};
+
+const defaultPieChartData = {
+    labels: ['Upload File and Select Sheet'],
+    datasets: [{
+        label: 'Sales Contribution',
+        data: [],
+        backgroundColor: [],
+        borderColor: [],
+        borderWidth: 1
+    }]
+};
+
+const defaultCustomerChartData = {
+    labels: ['Upload File & Select Sheet'],
+    datasets: [{ label: 'Total Sales Value', data: [], backgroundColor: 'rgba(75, 192, 192, 0.6)' }]
+};
+
+// New line chart default data
+const defaultLineChartData = {
+    labels: ['Upload File to See Trend'],
+    datasets: [{
+        label: 'Total Sales',
+        data: [],
+        borderColor: 'rgba(75, 192, 192, 1)',
+        backgroundColor: 'rgba(75, 192, 192, 0.2)',
+        tension: 0.1,
+        fill: true
+    }]
+};
+
+// Helper functions
+const generateColors = (numColors) => {
+    const colors = [];
+    const baseColors = [
+        'rgba(255, 99, 132, 0.7)', 'rgba(54, 162, 235, 0.7)', 'rgba(255, 206, 86, 0.7)',
+        'rgba(75, 192, 192, 0.7)', 'rgba(153, 102, 255, 0.7)', 'rgba(255, 159, 64, 0.7)',
+        'rgba(199, 199, 199, 0.7)', 'rgba(83, 102, 255, 0.7)', 'rgba(100, 255, 100, 0.7)',
+        'rgba(255, 100, 100, 0.7)'
+    ];
+    for (let i = 0; i < numColors; i++) {
+        colors.push(baseColors[i % baseColors.length]);
+    }
+    return colors;
+};
+
+const formatCurrency = (value) => {
+    if (typeof value !== 'number' || isNaN(value)) return 'N/A';
+    return value.toLocaleString('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 0, maximumFractionDigits: 0 });
+};
+
+const formatNumber = (value, precision = 0) => {
+    if (typeof value !== 'number' || isNaN(value)) return 'N/A';
+    return value.toLocaleString('en-IN', { minimumFractionDigits: precision, maximumFractionDigits: precision });
+}
+
+export default function DashboardPage() {
+    const [rawPipeSalesData, setRawPipeSalesData] = useState(null);
+    const [allMonthlyCustomerSales, setAllMonthlyCustomerSales] = useState({});
+    const [availableSheets, setAvailableSheets] = useState([]);
+    const [selectedSheet, setSelectedSheet] = useState('');
+    const [sheetTotals, setSheetTotals] = useState({}); // New state for sheet totals
+
+    const [barChartData, setBarChartData] = useState(defaultBarChartData);
+    const [barChartOptions, setBarChartOptions] = useState(defaultBarChartOptions);
+    const [pieChartData, setPieChartData] = useState(defaultPieChartData);
+    const [pieChartOptions, setPieChartOptions] = useState(defaultPieChartOptions);
+    const [customerChartData, setCustomerChartData] = useState(defaultCustomerChartData);
+    const [customerChartOptions, setCustomerChartOptions] = useState(defaultCustomerChartOptions);
+    const [lineChartData, setLineChartData] = useState(defaultLineChartData); // New line chart state
+    const [lineChartOptions, setLineChartOptions] = useState(defaultLineChartOptions); // New line chart state
+
+    const [monthlyTotalSales, setMonthlyTotalSales] = useState(0);
+    const [averageDailySales, setAverageDailySales] = useState(0);
+    const [topCustomer, setTopCustomer] = useState({ name: 'N/A', value: 0 });
+    const [topPipe, setTopPipe] = useState({ name: 'N/A', value: 0 });
+
+    const [isLoading, setIsLoading] = useState(false);
+    const [errorMsg, setErrorMsg] = useState('');
+    const fileInputRef = useRef(null);
+
+    const handleFileChange = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        setIsLoading(true);
+        setErrorMsg('');
+        setRawPipeSalesData(null);
+        setAllMonthlyCustomerSales({});
+        setAvailableSheets([]);
+        setSelectedSheet('');
+        setSheetTotals({});
+        setBarChartData(defaultBarChartData);
+        setBarChartOptions(defaultBarChartOptions);
+        setPieChartData(defaultPieChartData);
+        setPieChartOptions(defaultPieChartOptions);
+        setCustomerChartData(defaultCustomerChartData);
+        setCustomerChartOptions(defaultCustomerChartOptions);
+        setLineChartData(defaultLineChartData);
+        setMonthlyTotalSales(0);
+        setAverageDailySales(0);
+        setTopCustomer({ name: 'N/A', value: 0 });
+        setTopPipe({ name: 'N/A', value: 0 });
+
+        if (!/\.(xlsx|xls|xlsm)$/i.test(file.name)) {
+            setErrorMsg('Please upload a valid Excel file (.xlsx, .xls, .xlsm).');
+            setIsLoading(false);
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const arrayBuffer = e.target.result;
+                const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+
+                const intermediateData = {
+                    'Daily Total': {},
+                    'MonthlyPipeTotals': {}
+                };
+                const customerTotalsBySheet = {};
+                const sheetsFound = [];
+                const newSheetTotals = {}; // Object to store totals for each sheet
+
+                workbook.SheetNames.forEach(sheetName => {
+                    const worksheet = workbook.Sheets[sheetName];
+                    const sheetData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+
+                    if (sheetData.length < 2) {
+                        console.warn(`Sheet "${sheetName}" has less than 2 rows. Skipping.`);
+                        return;
+                    };
+
+                    let maxCols = 0;
+                    if (Array.isArray(sheetData[0])) {
+                        maxCols = sheetData[0].length;
+                    }
+                    if (maxCols < 3) {
+                        maxCols = sheetData
+                            .slice(1, 11)
+                            .reduce((max, row) => Array.isArray(row) ? Math.max(max, row.length) : max, 0);
+                    }
+
+                    let lastDataColIndex = maxCols - 1;
+                    const headerRow = sheetData[0];
+                    if (Array.isArray(headerRow) && headerRow.length > 0) {
+                        const lastHeader = headerRow[lastDataColIndex]?.toString().trim().toLowerCase();
+                        if (lastHeader === 'total' || lastHeader === 'sum' || lastHeader === 'grand total') {
+                            if (lastDataColIndex > 1) {
+                                lastDataColIndex--;
+                            }
+                        }
+                    }
+
+                    if (lastDataColIndex < 2) {
+                        console.warn(`Sheet "${sheetName}" doesn't have enough columns. Skipping.`);
+                        return;
+                    }
+
+                    const dailyTotalsForSheet = {};
+                    const pipeTotalsForSheet = {};
+                    const customerTotalsForSheet = {};
+                    let sheetTotal = 0; // Total for this sheet
+
+                    for (let rowIndex = 1; rowIndex < sheetData.length; rowIndex++) {
+                        const row = sheetData[rowIndex];
+                        if (!Array.isArray(row) || row.length < 3) continue;
+
+                        const pipeName = row[0]?.toString().trim();
+                        const customerName = row[1]?.toString().trim();
+
+                        if (!pipeName || !customerName) continue;
+
+                        const dailySales = row.slice(2, lastDataColIndex + 1).map(val => {
+                            if (val === null || val === undefined || val === "") return 0;
+                            const num = Number(val);
+                            return isNaN(num) ? 0 : num;
+                        });
+
+                        if (dailySales.length > 0) {
+                            const rowTotalSales = dailySales.reduce((sum, sale) => sum + sale, 0);
+                            sheetTotal += rowTotalSales; // Add to sheet total
+
+                            pipeTotalsForSheet[pipeName] = (pipeTotalsForSheet[pipeName] || 0) + rowTotalSales;
+
+                            dailySales.forEach((sale, dayIndex) => {
+                                const day = dayIndex + 1;
+                                dailyTotalsForSheet[day] = (dailyTotalsForSheet[day] || 0) + sale;
+                            });
+
+                            customerTotalsForSheet[customerName] = (customerTotalsForSheet[customerName] || 0) + rowTotalSales;
+                        }
+                    }
+
+                    // Store the total for this sheet
+                    newSheetTotals[sheetName] = sheetTotal;
+
+                    if (Object.keys(dailyTotalsForSheet).length > 0) {
+                        const maxDay = Math.max(...Object.keys(dailyTotalsForSheet).map(Number));
+                        const dailyTotalsArray = Array(maxDay).fill(0);
+                        for (const day in dailyTotalsForSheet) {
+                            dailyTotalsArray[parseInt(day) - 1] = dailyTotalsForSheet[day];
+                        }
+                        intermediateData['Daily Total'][sheetName] = dailyTotalsArray;
+                    }
+
+                    if (Object.keys(pipeTotalsForSheet).length > 0) {
+                        intermediateData['MonthlyPipeTotals'][sheetName] = pipeTotalsForSheet;
+                    }
+
+                    if (Object.keys(customerTotalsForSheet).length > 0) {
+                        customerTotalsBySheet[sheetName] = customerTotalsForSheet;
+                    }
+
+                    sheetsFound.push(sheetName);
+                });
+
+                if (Object.keys(intermediateData['Daily Total']).length === 0 && Object.keys(intermediateData['MonthlyPipeTotals']).length === 0) {
+                    throw new Error("No valid data sheets found or data couldn't be extracted.");
+                }
+
+                setRawPipeSalesData(intermediateData);
+                setAllMonthlyCustomerSales(customerTotalsBySheet);
+                setAvailableSheets(sheetsFound);
+                setSelectedSheet(sheetsFound[0] || '');
+                setSheetTotals(newSheetTotals);
+                setErrorMsg('');
+
+                // Update line chart with sheet totals
+                if (Object.keys(newSheetTotals).length > 0) {
+                    const sheetNames = Object.keys(newSheetTotals);
+                    const totals = sheetNames.map(sheet => newSheetTotals[sheet]);
+                    
+                    setLineChartData({
+                        labels: sheetNames,
+                        datasets: [{
+                            label: 'Total Sales',
+                            data: totals,
+                            borderColor: 'rgba(75, 192, 192, 1)',
+                            backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                            tension: 0.1,
+                            fill: true
+                        }]
+                    });
+                }
+
+            } catch (error) {
+                console.error("Error processing Excel file:", error);
+                setErrorMsg(`Error processing file: ${error.message}. Please check file format and content.`);
+                setRawPipeSalesData(null);
+                setAllMonthlyCustomerSales({});
+                setAvailableSheets([]);
+                setSelectedSheet('');
+                setSheetTotals({});
+                setBarChartData(defaultBarChartData);
+                setBarChartOptions(defaultBarChartOptions);
+                setPieChartData(defaultPieChartData);
+                setPieChartOptions(defaultPieChartOptions);
+                setCustomerChartData(defaultCustomerChartData);
+                setCustomerChartOptions(defaultCustomerChartOptions);
+                setLineChartData(defaultLineChartData);
+                setMonthlyTotalSales(0);
+                setAverageDailySales(0);
+                setTopCustomer({ name: 'N/A', value: 0 });
+                setTopPipe({ name: 'N/A', value: 0 });
+            } finally {
+                setIsLoading(false);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+            }
+        };
+
+        reader.onerror = (error) => {
+            console.error("Error reading file:", error);
+            setErrorMsg("Error reading the selected file.");
+            setIsLoading(false);
+            setRawPipeSalesData(null);
+            setAllMonthlyCustomerSales({});
+            setAvailableSheets([]);
+            setSelectedSheet('');
+            setSheetTotals({});
+            setBarChartData(defaultBarChartData);
+            setBarChartOptions(defaultBarChartOptions);
+            setPieChartData(defaultPieChartData);
+            setPieChartOptions(defaultPieChartOptions);
+            setCustomerChartData(defaultCustomerChartData);
+            setCustomerChartOptions(defaultCustomerChartOptions);
+            setLineChartData(defaultLineChartData);
+            setMonthlyTotalSales(0);
+            setAverageDailySales(0);
+            setTopCustomer({ name: 'N/A', value: 0 });
+            setTopPipe({ name: 'N/A', value: 0 });
+            if (fileInputRef.current) fileInputRef.current.value = "";
+        };
+
+        reader.readAsArrayBuffer(file);
+    };
+
+    useEffect(() => {
+        const sheetSelected = selectedSheet && availableSheets.includes(selectedSheet);
+        const hasData = rawPipeSalesData && allMonthlyCustomerSales;
+
+        let currentMonthlyTotal = 0;
+        let currentAverageDaily = 0;
+        let currentTopCust = { name: 'N/A', value: 0 };
+        let currentTopPip = { name: 'N/A', value: 0 };
+
+        if (sheetSelected && hasData) {
+            const dailyTotals = rawPipeSalesData['Daily Total']?.[selectedSheet];
+            const pipeSales = rawPipeSalesData['MonthlyPipeTotals']?.[selectedSheet];
+            const customerSales = allMonthlyCustomerSales?.[selectedSheet];
+
+            if (dailyTotals && dailyTotals.length > 0) {
+                currentMonthlyTotal = dailyTotals.reduce((sum, val) => sum + (val || 0), 0);
+            }
+            else if (pipeSales && Object.keys(pipeSales).length > 0) {
+                currentMonthlyTotal = Object.values(pipeSales).reduce((sum, val) => sum + (val || 0), 0);
+            }
+
+            const numDaysWithData = dailyTotals?.length || 0;
+            if (numDaysWithData > 0 && currentMonthlyTotal > 0) {
+                currentAverageDaily = currentMonthlyTotal / numDaysWithData;
+            }
+
+            if (customerSales && Object.keys(customerSales).length > 0) {
+                const sortedCustomers = Object.entries(customerSales)
+                    .sort(([, a], [, b]) => b - a);
+                if (sortedCustomers.length > 0) {
+                    currentTopCust = { name: sortedCustomers[0][0], value: sortedCustomers[0][1] };
+                }
+            }
+
+            if (pipeSales && Object.keys(pipeSales).length > 0) {
+                const sortedPipes = Object.entries(pipeSales)
+                    .sort(([, a], [, b]) => b - a);
+                if (sortedPipes.length > 0) {
+                    currentTopPip = { name: sortedPipes[0][0], value: sortedPipes[0][1] };
+                }
+            }
+
+            if (dailyTotals && dailyTotals.length > 0) {
+                const maxDays = dailyTotals.length;
+                const dayLabels = Array.from({ length: maxDays }, (_, i) => `${i + 1}`);
+                setBarChartData({
+                    labels: dayLabels,
+                    datasets: [{
+                        label: 'Total Sales', data: dailyTotals, borderWidth: 1,
+                        backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                    }],
+                });
+                setBarChartOptions(prev => ({
+                    ...prev,
+                    plugins: { ...prev.plugins, title: { display: true, text: `Total Daily Pipe Sales - ${selectedSheet}` } },
+                    scales: {
+                        x: { title: { display: true, text: 'Day of the Month' } },
+                        y: { title: { display: true, text: 'Total Sales' }, beginAtZero: true }
+                    }
+                }));
+            } else {
+                setBarChartData({ labels: [`No Daily Data for ${selectedSheet}`], datasets: [{ label: 'Total Sales', data: [] }] });
+                setBarChartOptions(prev => ({ ...prev, plugins: { ...prev.plugins, title: { display: true, text: `Total Daily Pipe Sales - ${selectedSheet}` } } }));
+            }
+
+            if (pipeSales && Object.keys(pipeSales).length > 0) {
+                const pipeLabels = Object.keys(pipeSales);
+                const pipeSalesValues = Object.values(pipeSales);
+                const backgroundColors = generateColors(pipeLabels.length);
+                const borderColors = backgroundColors.map(color => color.replace('0.7', '1'));
+
+                setPieChartData({
+                    labels: pipeLabels,
+                    datasets: [{
+                        label: 'Sales Contribution', data: pipeSalesValues,
+                        backgroundColor: backgroundColors, borderColor: borderColors, borderWidth: 1,
+                    }],
+                });
+                setPieChartOptions(prev => ({
+                    ...prev,
+                    plugins: { ...prev.plugins, title: { display: true, text: `Pipe Contribution - ${selectedSheet}` } },
+                }));
+            } else {
+                setPieChartData({ labels: [`No Pipe Data for ${selectedSheet}`], datasets: [{ label: 'Sales Contribution', data: [] }] });
+                setPieChartOptions(prev => ({ ...prev, plugins: { ...prev.plugins, title: { display: true, text: `Pipe Contribution - ${selectedSheet}` } } }));
+            }
+
+            if (customerSales && Object.keys(customerSales).length > 0) {
+                const sortedCustomers = Object.entries(customerSales)
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 15);
+
+                const customerLabels = sortedCustomers.map(([name]) => name);
+                const customerValues = sortedCustomers.map(([, value]) => value);
+                const backgroundColors = generateColors(customerLabels.length).map(c => c.replace('0.7', '0.6'));
+                const borderColors = backgroundColors.map(color => color.replace('0.6', '1'));
+
+                setCustomerChartData({
+                    labels: customerLabels,
+                    datasets: [{
+                        label: 'Monthly Sales Value',
+                        data: customerValues,
+                        backgroundColor: backgroundColors,
+                        borderColor: borderColors,
+                        borderWidth: 1,
+                    }],
+                });
+                setCustomerChartOptions(prev => ({
+                    ...prev,
+                    plugins: { ...prev.plugins, title: { display: true, text: `Top ${customerLabels.length} Customers - ${selectedSheet}` } },
+                    scales: {
+                        x: { title: { display: true, text: `Total Sales Value - ${selectedSheet}` }, beginAtZero: true },
+                        y: { title: { display: true, text: 'Customer' } }
+                    }
+                }));
+            } else {
+                setCustomerChartData({ labels: [`No Customer Data for ${selectedSheet}`], datasets: [{ label: 'Monthly Sales Value', data: [] }] });
+                setCustomerChartOptions(prev => ({
+                    ...prev,
+                    plugins: { ...prev.plugins, title: { display: true, text: `Top Customers - ${selectedSheet}` } },
+                    scales: {
+                        x: { title: { display: true, text: `Total Sales Value - ${selectedSheet}` }, beginAtZero: true },
+                        y: { title: { display: true, text: 'Customer' } }
+                    }
+                }));
+            }
+
+        } else {
+            setBarChartData(defaultBarChartData);
+            setBarChartOptions(defaultBarChartOptions);
+            setPieChartData(defaultPieChartData);
+            setPieChartOptions(defaultPieChartOptions);
+            setCustomerChartData(defaultCustomerChartData);
+            setCustomerChartOptions(defaultCustomerChartOptions);
+        }
+
+        setMonthlyTotalSales(currentMonthlyTotal);
+        setAverageDailySales(currentAverageDaily);
+        setTopCustomer(currentTopCust);
+        setTopPipe(currentTopPip);
+    }, [selectedSheet, rawPipeSalesData, availableSheets, allMonthlyCustomerSales]);
+
+    const handleUploadClick = () => {
+        setErrorMsg('');
+        fileInputRef.current?.click();
+    };
+
+    const handleSheetChange = (event) => {
+        setSelectedSheet(event.target.value);
+    };
+
+    const formatTons = (value, precision = 1) => {
+        if (typeof value !== 'number' || isNaN(value)) return 'N/A';
+        return `${value.toLocaleString('en-IN', {
+            minimumFractionDigits: precision,
+            maximumFractionDigits: precision
+        })} t`;
+    };
+
+    const stats = [
+        {
+            title: `Total Sales (${selectedSheet || 'Select Sheet'})`,
+            value: formatTons(monthlyTotalSales),
+            icon: <FiDollarSign className="text-blue-500" />,
+            bgColor: 'bg-blue-50',
+            textColor: 'text-blue-500'
+        },
+        {
+            title: `Avg Daily Sales (${selectedSheet || 'Select Sheet'})`,
+            value: formatTons(averageDailySales, 2),
+            icon: <FiActivity className="text-orange-500" />,
+            bgColor: 'bg-orange-50',
+            textColor: 'text-orange-500'
+        },
+        {
+            title: `Top Customer (${selectedSheet || 'Select Sheet'})`,
+            value: topCustomer.name !== 'N/A' ? `${topCustomer.name}` : 'N/A',
+            subValue: topCustomer.name !== 'N/A' ? formatTons(topCustomer.value) : '',
+            icon: <FiUsers className="text-green-500" />,
+            bgColor: 'bg-green-50',
+            textColor: 'text-green-500'
+        },
+        {
+            title: `Top Pipe (${selectedSheet || 'Select Sheet'})`,
+            value: topPipe.name !== 'N/A' ? `${topPipe.name}` : 'N/A',
+            subValue: topPipe.name !== 'N/A' ? formatTons(topPipe.value) : '',
+            icon: <FiBox className="text-red-500" />,
+            bgColor: 'bg-red-50',
+            textColor: 'text-red-500'
+        },
+    ];
+
+    return (
+        <div className="flex min-h-screen bg-gray-50">
+            <Sidebar />
+            <div className="flex-1 flex flex-col overflow-hidden">
+                <Header />
+                <main className="flex-1 overflow-y-auto p-6 md:p-8">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        {stats.map((stat, index) => (
+                            <div
+                                key={index}
+                                className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all duration-300 hover:-translate-y-1 relative overflow-hidden group"
+                            >
+                                <div className={`absolute inset-0 opacity-5 bg-gradient-to-br from-transparent to-${stat.textColor.split('-')[1]}-300`}></div>
+                                <div className="relative z-10 flex items-start justify-between h-full">
+                                    <div className="flex-1 mr-4">
+                                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                            {stat.title}
+                                        </p>
+                                        <p className="mt-2 text-2xl font-bold text-gray-900">
+                                            {stat.value}
+                                        </p>
+                                        {stat.subValue && (
+                                            <p className="mt-1 text-sm font-medium text-gray-600">
+                                                {stat.subValue}
+                                            </p>
+                                        )}
+                                    </div>
+                                    <div className={`flex-shrink-0 p-3 rounded-lg ${stat.bgColor} ${stat.textColor} transition-all duration-300 group-hover:scale-110`}>
+                                        <div className="w-6 h-6 flex items-center justify-center">
+                                            {stat.icon}
+                                        </div>
+                                    </div>
+                                </div>
+                                {index < 2 && (
+                                    <div className="relative mt-4 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                        <div
+                                            className={`absolute top-0 left-0 h-full ${stat.textColor.replace('text', 'bg')} rounded-full`}
+                                            style={{
+                                                width: `${index === 0 ?
+                                                    Math.min(100, monthlyTotalSales / 10000) :
+                                                    Math.min(100, averageDailySales / 1000)}%`
+                                            }}
+                                        ></div>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
+                    </div>
+
+                    <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-8 flex flex-col sm:flex-row items-center justify-between gap-4 flex-wrap">
+                        <div className="flex items-center gap-4 flex-wrap w-full sm:w-auto">
+                            <label htmlFor="sheetSelect" className="text-sm font-medium text-gray-700 whitespace-nowrap">Select Sheet:</label>
+                            <select
+                                id="sheetSelect"
+                                value={selectedSheet}
+                                onChange={handleSheetChange}
+                                disabled={!rawPipeSalesData || availableSheets.length === 0 || isLoading}
+                                className="block w-full sm:w-auto text-sm border-gray-300 rounded-md focus:ring-blue-500 focus:border-blue-500 shadow-sm disabled:opacity-50 disabled:bg-gray-100 p-2"
+                            >
+                                <option value="" disabled={selectedSheet !== ''}>-- Select Sheet --</option>
+                                {availableSheets.map(sheet => (
+                                    <option key={sheet} value={sheet}>{sheet}</option>
+                                ))}
+                                {availableSheets.length === 0 && !isLoading && rawPipeSalesData && (
+                                    <option value="" disabled>No sheets found in file</option>
+                                )}
+                                {availableSheets.length === 0 && !isLoading && !rawPipeSalesData && (
+                                    <option value="" disabled>Upload a file first</option>
+                                )}
+                            </select>
+                        </div>
+
+                        <button
+                            onClick={handleUploadClick}
+                            disabled={isLoading}
+                            className={`flex items-center justify-center px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors text-sm ${isLoading ? 'opacity-50 cursor-not-allowed' : ''} w-full sm:w-auto`}
+                        >
+                            <FiUpload className="mr-2 h-4 w-4" />
+                            {isLoading ? 'Processing...' : 'Upload Excel File'}
+                        </button>
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            onChange={handleFileChange}
+                            accept=".xlsx, .xls, .xlsm"
+                            className="hidden"
+                            id="fileUpload"
+                        />
+                    </div>
+
+                    {errorMsg && (
+                        <div className="my-4 p-3 bg-red-100 text-red-700 border border-red-300 rounded-md text-sm">
+                            {errorMsg}
+                        </div>
+                    )}                   
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                        <DailySalesBarChart
+                            data={barChartData}
+                            options={barChartOptions}
+                            isLoading={isLoading}
+                        />
+
+                        <PipeContributionPieChart
+                            data={pieChartData}
+                            options={pieChartOptions}
+                            isLoading={isLoading}
+                        />
+
+                        <MonthlyCustomerBarChart
+                            data={customerChartData}
+                            options={customerChartOptions}
+                            isLoading={isLoading}
+                            selectedMonth={selectedSheet}
+                            allMonthlyCustomerSales={allMonthlyCustomerSales}
+                        />
+                    </div>
+
+                    <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-8">
+                        <div className="h-80">
+                            <SheetSalesTrendChart
+                                data={lineChartData}
+                                options={lineChartOptions}
+                                isLoading={isLoading}
+                            />
+                        </div>
+                    </div>
+
+                    <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg p-6 text-white shadow-lg">
+                        <div className="flex flex-col md:flex-row justify-between items-center">
+                            <div className="mb-4 md:mb-0 text-center md:text-left">
+                                <h2 className="text-xl font-bold mb-2">Advanced Pipe Sales Analysis</h2>
+                                <p>Use our AI-powered tools to forecast demand and optimize inventory.</p>
+                            </div>
+                            <Link href="/analysis" className="px-6 py-3 bg-white text-blue-600 rounded-lg font-medium hover:bg-gray-100 transition-colors duration-200 ease-in-out shadow">
+                                Explore Analysis
+                            </Link>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+    );
+}
