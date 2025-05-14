@@ -960,12 +960,11 @@ export default function DashboardPage() {
 
                     <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-8 flex flex-col sm:flex-row items-center justify-between gap-4 flex-wrap">
                         <div className="flex items-center gap-4 flex-wrap w-full sm:w-auto">
-                            {financialYear && (
-                                <div className="flex items-center bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-sm font-medium">
-                                    <FiCalendar className="mr-1" />
-                                    {financialYear}
-                                </div>
-                            )}
+
+                            <div className="flex items-center bg-blue-50 text-blue-700 px-3 py-1 rounded-full text-sm font-medium">
+                                <FiCalendar className="mr-1" />
+                            </div>
+
                             <label htmlFor="sheetSelect" className="text-sm font-medium text-gray-700 whitespace-nowrap">Select Month:</label>
                             <select
                                 id="sheetSelect"
@@ -1180,6 +1179,17 @@ export default function DashboardPage() {
 
                     {/* New Line Chart Section */}
                     <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-8">
+
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-medium text-gray-900">{lineChartOptions.plugins.title.text}</h3>
+                            <button
+                                onClick={() => downloadCSV(lineChartData, 'sales_trend')}
+                                className="cursor-pointer flex items-center gap-1 px-3 py-1 bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100 text-sm"
+                            >
+                                <FiDownload className="h-4 w-4" />
+                                Download
+                            </button>
+                        </div>
 
                         <div className="h-80">
                             <SheetSalesTrendChart
