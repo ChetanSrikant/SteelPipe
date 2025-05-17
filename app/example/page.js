@@ -114,48 +114,73 @@ const defaultTopSkuOptions = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
-    legend: { display: false },
-    title: { display: true, text: 'Top 5 SKUs by Number of Customers' },
+    legend: { display: true, position: 'bottom' },
+    title: { display: true, text: 'Top 5 SKUs by Customer Count & Sales Value' },
     tooltip: {
       callbacks: {
         label: function(context) {
-          return `${context.parsed.y} customers`;
+          let label = context.dataset.label || '';
+          if (label) label += ': ';
+          if (context.parsed.y !== null) {
+            label += context.dataset.type === 'line'
+              ? (context.parsed.y)
+              : `${context.parsed.y} customers`;
+          }
+          return label;
         },
         afterLabel: function(context) {
-          const customers = context.raw?.customers || [];
-          return customers.length > 0 
-            ? `Customers: ${customers.slice(0, 5).join(', ')}${customers.length > 5 ? '...' : ''}`
-            : 'No customer data available';
+          if (context.datasetIndex === 0) {
+            const customers = context.raw?.customers || [];
+            return customers.length > 0
+              ? `Customers: ${customers.slice(0, 5).join(', ')}${customers.length > 5 ? '...' : ''}`
+              : '';
+          }
+          return null;
         }
       }
     }
   },
   scales: {
-    x: { 
+    x: {
       title: { display: true, text: 'SKU' },
-      ticks: {
-        autoSkip: false,
-        maxRotation: 45,
-        minRotation: 45
-      }
+      ticks: { autoSkip: false, maxRotation: 45, minRotation: 45 }
     },
-    y: { 
-      title: { display: true, text: 'Number of Customers' }, 
+    y: {
+      title: { display: true, text: 'Number of Customers' },
       beginAtZero: true,
-      ticks: {
-        precision: 0
-      }
+      ticks: { precision: 0 },
+      position: 'left'
+    },
+    y1: {
+      title: { display: true, text: 'Sales Value' },
+      beginAtZero: true,
+      position: 'right',
+      grid: { drawOnChartArea: false }
     }
   }
 };
 
 const defaultTopSkuData = {
   labels: ['Upload File & Select Sheet'],
-  datasets: [{
-    label: 'Customer Count',
-    data: [],
-    backgroundColor: 'rgba(75, 192, 192, 0.6)'
-  }]
+  datasets: [
+    {
+      type: 'bar',
+      label: 'Customer Count',
+      data: [],
+      backgroundColor: 'rgba(75, 192, 192, 0.6)',
+      yAxisID: 'y'
+    },
+    {
+      type: 'line',
+      label: 'Sales Value',
+      data: [],
+      borderColor: 'rgba(153, 102, 255, 0.8)',
+      backgroundColor: 'rgba(153, 102, 255, 0.2)',
+      borderWidth: 2,
+      tension: 0.1,
+      yAxisID: 'y1'
+    }
+  ]
 };
 
 // --- Default Chart Data ---
@@ -882,35 +907,36 @@ export default function DashboardPage() {
 
                 try {
                     const worksheet = workbook.Sheets[selectedSheet];
-                    // Convert to array and skip the header row
                     const sheetDataArray = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
 
-                    // Process each row, skipping empty rows and header
                     for (let rowIndex = 1; rowIndex < sheetDataArray.length; rowIndex++) {
                         const row = sheetDataArray[rowIndex];
-
-                        // Skip if not an array or doesn't have enough columns
                         if (!Array.isArray(row)) continue;
-
-                        // Skip rows that don't have at least SKU and Customer columns
                         if (row.length < 2) continue;
 
                         const pipeName = row[0]?.toString().trim();
                         const customerName = row[1]?.toString().trim();
 
-                        // Skip rows with empty SKU or Customer
                         if (!pipeName || !customerName || pipeName === "Item Name" || customerName === "Customer") continue;
 
-                        // Initialize SKU entry if it doesn't exist
+                        // Calculate row total sales (sum of all day columns)
+                        const dailySales = row.slice(2).map(val => {
+                            if (val === null || val === undefined || val === "") return 0;
+                            const num = Number(val);
+                            return isNaN(num) ? 0 : num;
+                        });
+                        const rowTotalSales = dailySales.reduce((sum, sale) => sum + sale, 0);
+
+                        // Track customers per SKU
                         if (!skuCustomerMap[pipeName]) {
                             skuCustomerMap[pipeName] = {
                                 customerCount: 0,
-                                customers: new Set()
+                                customers: new Set(),
+                                totalSales: 0
                             };
                         }
-
-                        // Add customer to the set (automatically handles duplicates)
                         skuCustomerMap[pipeName].customers.add(customerName);
+                        skuCustomerMap[pipeName].totalSales += rowTotalSales;
                     }
 
                     // Calculate number of unique customers for each SKU
@@ -923,20 +949,35 @@ export default function DashboardPage() {
                         .map(([sku, data]) => ({
                             sku,
                             customerCount: data.customerCount,
+                            totalSales: data.totalSales,
                             customers: Array.from(data.customers)
                         }))
                         .sort((a, b) => b.customerCount - a.customerCount)
                         .slice(0, 5);
 
-                    // Only update chart if we have valid data
                     if (sortedSkus.length > 0) {
                         setTopSkuChartData({
                             labels: sortedSkus.map(item => item.sku),
-                            datasets: [{
-                                label: 'Customer Count',
-                                data: sortedSkus.map(item => item.customerCount),
-                                backgroundColor: generateColors(sortedSkus.length)
-                            }]
+                            datasets: [
+                                {
+                                    type: 'bar',
+                                    label: 'Customer Count',
+                                    data: sortedSkus.map(item => item.customerCount),
+                                    backgroundColor: 'rgba(75, 192, 192, 0.6)',
+                                    yAxisID: 'y',
+                                    customers: sortedSkus.map(item => item.customers)
+                                },
+                                {
+                                    type: 'line',
+                                    label: 'Sales Value',
+                                    data: sortedSkus.map(item => item.totalSales),
+                                    borderColor: 'rgba(153, 102, 255, 0.8)',
+                                    backgroundColor: 'rgba(153, 102, 255, 0.2)',
+                                    borderWidth: 2,
+                                    tension: 0.1,
+                                    yAxisID: 'y1'
+                                }
+                            ]
                         });
 
                         setTopSkuChartOptions(prev => ({
@@ -945,23 +986,16 @@ export default function DashboardPage() {
                                 ...prev.plugins,
                                 title: {
                                     display: true,
-                                    text: `Top 5 SKUs by Number of Customers - ${availableSheets.find(s => s.originalName === selectedSheet)?.displayName || selectedSheet}`
+                                    text: `Top 5 SKUs by Customer Count & Sales Value - ${availableSheets.find(s => s.originalName === selectedSheet)?.displayName || selectedSheet}`
                                 }
                             }
                         }));
                     } else {
-                        setTopSkuChartData({
-                            labels: ["No valid SKU data found"],
-                            datasets: [{ label: 'Customer Count', data: [] }]
-                        });
+                        setTopSkuChartData(defaultTopSkuData);
                     }
-
                 } catch (error) {
                     console.error("Error processing SKU data:", error);
-                    setTopSkuChartData({
-                        labels: ["Error processing SKU data"],
-                        datasets: [{ label: 'Customer Count', data: [] }]
-                    });
+                    setTopSkuChartData(defaultTopSkuData);
                 }
             } else {
                 setTopSkuChartData(defaultTopSkuData);
