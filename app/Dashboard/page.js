@@ -16,6 +16,8 @@ import SheetSalesTrendChart from '../components/charts/SheetSalesTrendChart';
 import SkuCustomerChart from '../components/charts/SkuCustomerChart';
 import TopSkuChart from '../components/charts/TopSkuChart';
 
+import Chatbot from '../components/Chatbot';
+
 // --- Default Chart Options ---
 const defaultBarChartOptions = {
     responsive: true,
@@ -1396,6 +1398,8 @@ export default function DashboardPage() {
                         </div>
                     </div>
                 </main>
+                {/* Chatbot */}
+                <Chatbot />
             </div>
         </div>
     );

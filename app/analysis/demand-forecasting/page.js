@@ -1,101 +1,333 @@
 "use client";
-import Sidebar from '../../components/Sidebar';
-import Header from '../../components/Header';
-import { FiArrowLeft, FiDownload, FiFilter, FiRefreshCw, FiCalendar, FiBarChart2 } from 'react-icons/fi';
+import Header from '@/app/components/Header';
+import Sidebar from '@/app/components/Sidebar';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 
-export default function DemandForecasting() {
+const API_BASE_URL = 'https://03615f876e54.ngrok-free.app';
+
+const apiClient = {
+  getPipeOptions: async () => {
+    const response = await fetch(`${API_BASE_URL}/generate_forecast_MPL`, {
+      headers: { 'ngrok-skip-browser-warning': '69420' },
+    });
+    if (!response.ok) throw new Error("Failed to fetch pipe options");
+    return await response.json();
+  },
+  generateForecast: async (formData) => {
+    const response = await fetch(`${API_BASE_URL}/forecast`, {
+      method: 'POST',
+      body: formData,
+      headers: { 'ngrok-skip-browser-warning': '69420' },
+    });
+    if (!response.ok) throw new Error("Failed to generate forecast");
+    return await response.json();
+  },
+};
+
+export default function AnalysisPage() {
   const router = useRouter();
-  
+  const [pipeOptions, setPipeOptions] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [showSizeDropdown, setShowSizeDropdown] = useState(false);
+
+  const [forecastSettings, setForecastSettings] = useState({
+    aggregation: 'Monthly',
+    pipeType: '',
+    num_months: 4,
+    pipesize: [],
+  });
+
+  const [availableSizes, setAvailableSizes] = useState([]);
+  const [forecastData, setForecastData] = useState({
+    forecast_dict: null,
+    insufficient_data: false
+  });
+
+  useEffect(() => {
+    const loadPipeOptions = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const data = await apiClient.getPipeOptions();
+        setPipeOptions(data);
+      } catch (err) {
+        setError(`Error loading pipe options: ${err.message}`);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadPipeOptions();
+  }, []);
+
+  useEffect(() => {
+    if (pipeOptions && forecastSettings.pipeType) {
+      const sizes = pipeOptions.pipe_type_to_sizes[forecastSettings.pipeType] || [];
+      setAvailableSizes(sizes);
+      setForecastSettings(prev => ({ ...prev, pipesize: [] }));
+    } else {
+      setAvailableSizes([]);
+      setForecastSettings(prev => ({ ...prev, pipesize: [] }));
+    }
+  }, [forecastSettings.pipeType, pipeOptions]);
+
+  const handleSettingChange = useCallback((setting, value) => {
+    setForecastSettings(prevSettings => {
+      const newSettings = { ...prevSettings, [setting]: value };
+      if (setting === 'aggregation') {
+        const maxPeriod = value === 'Weekly' ? 16 : 4;
+        newSettings.num_months = Math.min(newSettings.num_months, maxPeriod);
+      }
+      return newSettings;
+    });
+  }, []);
+
+  const handleSizeSelection = useCallback((size) => {
+    setForecastSettings(prevSettings => {
+      let newSizes;
+      if (size === 'All') {
+        const allSelected = availableSizes.every(s => prevSettings.pipesize.includes(s));
+        newSizes = allSelected ? [] : [...availableSizes];
+      } else {
+        if (prevSettings.pipesize.includes(size)) {
+          newSizes = prevSettings.pipesize.filter(s => s !== size);
+        } else {
+          newSizes = [...prevSettings.pipesize, size];
+        }
+      }
+      return { ...prevSettings, pipesize: newSizes };
+    });
+  }, [availableSizes]);
+
+  const getMaxForecastPeriod = useCallback(() => {
+    return forecastSettings.aggregation === 'Weekly' ? 16 : 4;
+  }, [forecastSettings.aggregation]);
+
+  const generateForecast = async () => {
+    if (!forecastSettings.pipeType || forecastSettings.pipesize.length === 0) {
+      setError('Please select both pipe type and at least one pipe size before generating a forecast.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setForecastData({
+      forecast_dict: null,
+      insufficient_data: false
+    });
+
+    try {
+      const formData = new FormData();
+      formData.append('aggregation', forecastSettings.aggregation);
+      formData.append('pipeType', forecastSettings.pipeType);
+      formData.append('num_months', forecastSettings.num_months.toString());
+      formData.append('pipesize', forecastSettings.pipesize.join(','));
+
+      const data = await apiClient.generateForecast(formData);
+
+      setForecastData({
+        forecast_dict: data.forecast_dict || null,
+        insufficient_data: data.insufficient_data || false
+      });
+
+    } catch (err) {
+      setError(`Error generating forecast: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="flex min-h-screen bg-gray-50">
-      {/* Sidebar */}
       <Sidebar />
-      
-      {/* Main Content Area */}
+
       <div className="flex-1 overflow-auto">
-        {/* Header */}
         <Header />
-        
-        {/* Page Content */}
+
         <div className="p-8">
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-            {/* Page Header */}
-            <div className="flex flex-col md:flex-row md:justify-between md:items-center mb-8 gap-4">
-              <div className="flex items-center space-x-4">
-                <button 
-                  onClick={() => router.back()}
-                  className="p-2 rounded-full hover:bg-gray-100 transition-colors"
-                >
-                  <FiArrowLeft className="text-gray-600" />
-                </button>
-                <div>
-                  <h2 className="text-2xl font-bold">Demand Forecasting</h2>
-                  <p className="text-sm text-gray-500">Predict future product demand based on historical data</p>
+          <div className="bg-white p-8 rounded-xl shadow-md border border-gray-100">
+            <h1 className="text-3xl font-bold text-gray-800 mb-2">AI-Powered Demand Forecasting</h1>
+            <p className="text-gray-500 mb-8">Configure your forecast parameters below</p>
+
+            {error && (
+              <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
+                {error}
+              </div>
+            )}
+
+            {/* Configuration UI */}
+            <div className="w-full space-y-8">
+              {/* First Row */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+                {/* Aggregation Frequency */}
+                <div className="space-y-4">
+                  <label className="block text-base font-medium text-gray-700">Aggregation</label>
+                  <div className="flex space-x-4">
+                    {['Weekly', 'Monthly'].map(option => (
+                      <button
+                        key={option}
+                        className={`px-6 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                          forecastSettings.aggregation === option
+                            ? 'bg-blue-600 text-white shadow-md'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                        onClick={() => handleSettingChange('aggregation', option)}
+                        disabled={loading}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* Pipe Type */}
+                <div className="space-y-4">
+                  <label className="block text-base font-medium text-gray-700">Pipe Type</label>
+                  <select
+                    value={forecastSettings.pipeType}
+                    onChange={(e) => handleSettingChange('pipeType', e.target.value)}
+                    className="w-full px-6 py-3 bg-white border border-gray-300 rounded-lg text-base focus:ring-blue-500 focus:border-blue-500"
+                    disabled={loading || !pipeOptions}
+                  >
+                    <option value="">Select pipe type</option>
+                    {pipeOptions?.pipe_types?.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                  {!pipeOptions && !loading && !error && (
+                    <p className="text-sm text-gray-500">Loading pipe types...</p>
+                  )}
+                </div>
+                {/* Forecast Period */}
+                <div className="space-y-4">
+                  <label className="block text-base font-medium text-gray-700">
+                    Forecast Period (max {getMaxForecastPeriod()} {forecastSettings.aggregation === 'Weekly' ? 'weeks' : 'months'})
+                  </label>
+                  <div className="flex items-center space-x-4">
+                    <input
+                      type="number"
+                      value={forecastSettings.num_months}
+                      onChange={(e) => handleSettingChange(
+                        'num_months',
+                        Math.min(Math.max(1, Number(e.target.value)), getMaxForecastPeriod())
+                      )}
+                      className="w-24 px-4 py-2.5 border-2 border-gray-300 rounded-lg text-base focus:ring-blue-500 focus:border-blue-500"
+                      min="1"
+                      max={getMaxForecastPeriod()}
+                      disabled={loading}
+                    />
+                    <span className="text-gray-500 text-base">
+                      {forecastSettings.num_months} {forecastSettings.aggregation.toLowerCase()}
+                      {forecastSettings.num_months !== 1 ? 's' : ''}
+                    </span>
+                  </div>
                 </div>
               </div>
-              <div className="flex flex-wrap gap-3">
-                <button className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-                  <FiDownload className="mr-2" />
-                  Export Report
-                </button>
+              {/* Second Row */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+                {/* Pipe Size (Dropdown) */}
+                <div className="space-y-4 relative">
+                  <label className="block text-base font-medium text-gray-700">Pipe Size(s)</label>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      className="w-full px-6 py-3 bg-white border border-gray-300 rounded-lg text-base text-left focus:ring-blue-500 focus:border-blue-500 flex justify-between items-center"
+                      onClick={() => setShowSizeDropdown(!showSizeDropdown)}
+                      disabled={loading || !forecastSettings.pipeType || availableSizes.length === 0}
+                    >
+                      <span>
+                        {forecastSettings.pipesize.length === 0 
+                          ? "Select pipe size(s)" 
+                          : forecastSettings.pipesize.length === availableSizes.length
+                            ? "All Sizes Selected"
+                            : `${forecastSettings.pipesize.length} size(s) selected`}
+                      </span>
+                      <svg className={`h-5 w-5 text-gray-400 transition-transform ${showSizeDropdown ? 'rotate-180' : ''}`} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                    {showSizeDropdown && (
+                      <div className="absolute z-10 mt-1 w-full bg-white shadow-lg max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none">
+                        <div className="px-4 py-2 hover:bg-gray-100 cursor-pointer">
+                          <label className="flex items-center space-x-3">
+                            <input
+                              type="checkbox"
+                              className="form-checkbox h-5 w-5 text-blue-600 rounded"
+                              checked={forecastSettings.pipesize.length === availableSizes.length && availableSizes.length > 0}
+                              onChange={() => handleSizeSelection('All')}
+                            />
+                            <span className="text-gray-700">All Sizes</span>
+                          </label>
+                        </div>
+                        {availableSizes.map(size => (
+                          <div key={size} className="px-4 py-2 hover:bg-gray-100 cursor-pointer">
+                            <label className="flex items-center space-x-3">
+                              <input
+                                type="checkbox"
+                                className="form-checkbox h-5 w-5 text-blue-600 rounded"
+                                checked={forecastSettings.pipesize.includes(size)}
+                                onChange={() => handleSizeSelection(size)}
+                              />
+                              <span className="text-gray-700">{size}</span>
+                            </label>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {forecastSettings.pipeType && availableSizes.length === 0 && !loading && (
+                    <p className="text-sm text-gray-500">No sizes available for selected pipe type.</p>
+                  )}
+                </div>
+                {/* Generate Forecast Button */}
+                <div className="flex items-end col-span-1 md:col-span-2">
+                  <div className="w-full space-y-2">
+                    <label
+                      htmlFor="generate-forecast-btn"
+                      className="block text-base font-medium text-gray-700 mb-2"
+                    >
+                      Click here to generate results
+                    </label>
+                    <button
+                      id="generate-forecast-btn"
+                      type="button"
+                      onClick={generateForecast}
+                      disabled={loading || !forecastSettings.pipeType || forecastSettings.pipesize.length === 0}
+                      className={`w-full px-6 py-4 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-lg font-semibold text-base shadow-lg transition-all ${
+                        loading || !forecastSettings.pipeType || forecastSettings.pipesize.length === 0
+                          ? 'opacity-70 cursor-not-allowed'
+                          : 'hover:from-blue-700 hover:to-blue-800'
+                      }`}
+                    >
+                      {loading ? 'Generating Forecast...' : 'Generate Forecast'}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* Charts Section */}
-            <div className="mb-8">
-              
-              
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Forecast Chart */}
-                <div className="bg-white border border-gray-200 rounded-lg p-4">
-                  <div className="flex justify-between items-center mb-4">
-                    <h4 className="font-medium flex items-center">
-                      <FiBarChart2 className="mr-2 text-blue-500" />
-                      Demand Forecast
-                    </h4>
-                    <select className="text-sm p-1 border border-gray-200 rounded">
-                      <option>Last 6 Months</option>
-                      <option>Last Year</option>
-                    </select>
+            {/* Results Section */}
+            {forecastData.forecast_dict && (
+              <div className="mt-12 pt-8 border-t border-gray-200 space-y-4">
+                <h2 className="text-xl font-semibold text-gray-800">Forecast Results</h2>
+                {forecastData.insufficient_data && (
+                  <div className="mb-4 p-4 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded">
+                    Warning: The forecast was generated with insufficient historical data and may be less accurate.
                   </div>
-                  <div className="h-64 bg-gray-50 rounded flex items-center justify-center">
-                    <p className="text-gray-400">[graph 1 here]</p>
-                  </div>
-                </div>
-                
-                {/* Comparison Chart */}
-                <div className="bg-white border border-gray-200 rounded-lg p-4">
-                  <div className="flex justify-between items-center mb-4">
-                    <h4 className="font-medium flex items-center">
-                      <FiBarChart2 className="mr-2 text-green-500" />
-                      Actual vs Forecast
-                    </h4>
-                    <select className="text-sm p-1 border border-gray-200 rounded">
-                      <option>Months</option>
-                      <option>Weeks</option>
-                    </select>
-                  </div>
-                  <div className="h-64 bg-gray-50 rounded flex items-center justify-center">
-                    <p className="text-gray-400">[graph 2 here]</p>
-                  </div>
+                )}
+                <div className="bg-gray-50 p-4 rounded-lg overflow-auto text-sm">
+                  <pre className="whitespace-pre-wrap break-words">
+                    {JSON.stringify(forecastData.forecast_dict, null, 2)}
+                  </pre>
                 </div>
               </div>
-            </div>
+            )}
 
-            {/* Data Table */}
-            <div>
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-semibold">Detailed Forecast Data</h3>
-                <div className="flex space-x-2">
-                  <input 
-                    type="text" 
-                    placeholder="Search products..." 
-                    className="p-2 border border-gray-300 rounded-lg text-sm"
-                  />
-                </div>
+            {!forecastData.forecast_dict && !loading && !error && (
+              <div className="mt-12 pt-8 border-t border-gray-200">
+                <p className="text-gray-600">No forecast data generated yet. Configure parameters and click "Generate Forecast".</p>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </div>

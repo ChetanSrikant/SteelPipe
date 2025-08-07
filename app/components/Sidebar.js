@@ -10,7 +10,7 @@ export default function Sidebar() {
 
   const navItems = [
     {
-      href: "/Dashboard",  
+      href: "/dashboard",  
       icon: <FiActivity className="text-lg" />,
       label: "Dashboard",
     },
