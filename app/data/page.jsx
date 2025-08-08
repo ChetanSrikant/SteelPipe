@@ -150,8 +150,8 @@ export default function DataViewPage() {
           <StatCard title="Total Rows" value={stats.totalRows || data.length} color="blue" />
           <StatCard title="Filtered Rows" value={filteredData.length} color="green" />
           <StatCard title="Total Sales" value={`${totalSales} tons`} color="cyan" />
-          <StatCard title="Unique Columns" value={columns.length} color="purple" />
-          <StatCard title="Source Tables" value={uniqueTables.length} color="orange" />
+          <StatCard title="Unique Customers" value={uniqueCustomerCodes.length} color="purple" />
+          <StatCard title="Unique Items" value={uniqueItemNames.length} color="orange" />
         </div>
 
         {/* Filters */}

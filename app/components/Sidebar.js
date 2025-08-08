@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { FiActivity, FiTrendingUp, FiSettings, FiLogOut } from "react-icons/fi";
+import { FiActivity, FiTrendingUp, FiSettings, FiLogOut, FiDatabase, FiBarChart2 } from "react-icons/fi";
 
 export default function Sidebar() {
   const currentPath = usePathname();
@@ -13,6 +13,16 @@ export default function Sidebar() {
       href: "/dashboard",  
       icon: <FiActivity className="text-lg" />,
       label: "Dashboard",
+    },
+    {
+      href: "/overall_dashboard",
+      icon: <FiDatabase className="text-lg" />,
+      label: "Database Dashboard",
+    },
+    {
+      href: "/data",
+      icon: <FiBarChart2 className="text-lg" />,
+      label: "Data Analysis",
     },
     {
       href: "/analysis",
