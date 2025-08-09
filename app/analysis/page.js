@@ -4,8 +4,9 @@ import Sidebar from '@/app/components/Sidebar';
 import { useState, useEffect, useCallback, useRef } from 'react'; // Import useRef
 import { useRouter } from 'next/navigation';
 import DataTable from '@/app/components/DataTable';
+import * as XLSX from 'xlsx';
 
-const API_BASE_URL = process.env.REACT_APP_ANALYSIS_API_BASE_URL;
+const API_BASE_URL = process.env.NEXT_PUBLIC_ANALYSIS_API_BASE_URL;
 
 const apiClient = {
   getPipeOptions: async () => {
@@ -85,6 +86,9 @@ export default function AnalysisPage() {
 
   // Ref for the month filter dropdown container
   const monthFilterDropdownRef = useRef(null);
+
+  const [insufficientData, setInsufficientData] = useState([]);
+  const [showInsufficientData, setShowInsufficientData] = useState(false);
 
 
   useEffect(() => {
@@ -177,6 +181,8 @@ export default function AnalysisPage() {
     setDisplayTables([]);
     setAvailableMonths([]);
     setSelectedMonths(['All']);
+    setInsufficientData([]); // Reset insufficient data
+    setShowInsufficientData(false); // Hide insufficient data section
 
     try {
       const formData = new FormData();
@@ -186,9 +192,15 @@ export default function AnalysisPage() {
       formData.append('pipesize', forecastSettings.pipesize.join(','));
 
       const data = await apiClient.generateForecast(formData);
-      const { forecast_dict } = data;
+      const { forecast_dict, insufficient_data } = data; // Destructure insufficient_data
 
       setForecastTableData(forecast_dict);
+
+      // Handle insufficient data
+      if (insufficient_data && insufficient_data.length > 0) {
+        setInsufficientData(insufficient_data);
+        setShowInsufficientData(true); // Automatically show if data exists
+      }
 
       if (forecast_dict) {
         // Extract unique months from the forecast data and sort them chronologically
@@ -320,6 +332,30 @@ export default function AnalysisPage() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleDownloadExcel = () => {
+    if (insufficientData.length === 0) {
+      setError("No insufficient data to download.");
+      return;
+    }
+
+    const workbook = XLSX.utils.book_new();
+    const worksheetData = [['ITEM'], ...insufficientData.map(item => [item])];
+    const worksheet = XLSX.utils.aoa_to_sheet(worksheetData);
+
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Insufficient Data');
+    const excelBuffer = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+
+    const blob = new Blob([excelBuffer], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `insufficient_data_${new Date().toISOString().slice(0,10)}.xlsx`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
   };
 
   // Reset everything
@@ -596,6 +632,51 @@ export default function AnalysisPage() {
                 <div className="mt-12 pt-8 border-t border-gray-200">
                   <p className="text-gray-600">No forecast data generated for the selected parameters.</p>
                 </div>
+              )}
+
+              {/* Render Insufficient Data as a table */}
+              {showInsufficientData && insufficientData.length > 0 && (
+                <div className="mt-8 p-4 bg-white rounded-lg shadow-sm border border-gray-200">
+                  <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-lg font-semibold">
+                      Items with Insufficient Historical Data ({insufficientData.length} items)
+                    </h2>
+                    <button
+                      className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
+                      onClick={handleDownloadExcel}
+                    >
+                      Download Insufficient Data (Excel)
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full bg-white border border-gray-200">
+                      <thead>
+                        <tr>
+                          <th className="px-4 py-2 border-b border-gray-200 text-left font-medium">ITEM</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {insufficientData.map((item, idx) => (
+                          <tr key={idx} className="border-b border-gray-200">
+                            <td className="px-4 py-2">{item}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              {insufficientData.length > 0 && (
+                <button
+                  onClick={() => setShowInsufficientData(!showInsufficientData)}
+                  className={`px-4 py-2 rounded-md text-sm ${
+                    showInsufficientData 
+                      ? 'bg-yellow-600 text-white' 
+                      : 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
+                  }`}
+                >
+                  {showInsufficientData ? 'Hide Insufficient Data' : 'Show Insufficient Data'}
+                </button>
               )}
             </div>
           </div>

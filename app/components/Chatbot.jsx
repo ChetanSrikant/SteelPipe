@@ -32,7 +32,8 @@ export default function Chatbot() {
     setLoading(true);
 
     try {
-      const response = await fetch(process.env.REACT_APP_CHATBOT_API_URL, {
+      // Use your Next.js API route as a proxy
+      const response = await fetch('/api/chatbot', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: input })
@@ -46,7 +47,6 @@ export default function Chatbot() {
         // Results table
         if (data.results && data.results.length > 0) {
           const headers = Object.keys(data.results[0]);
-          
           htmlResponse += `
             <div class="mb-6">
               <h4 class="text-lg font-semibold mb-3 text-blue-700">📊 Results</h4>
@@ -64,11 +64,17 @@ export default function Chatbot() {
                   <tbody>
                     ${data.results.map((row, rowIndex) => `
                       <tr class="${rowIndex % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-gray-100">
-                        ${headers.map(header => `
-                          <td class="py-3 px-4 text-sm text-gray-800 border-b border-r border-gray-200 last:border-r-0">
-                            ${header.toLowerCase().includes('sales') ? formatSalesValue(row[header]) : row[header]}
-                          </td>
-                        `).join('')}
+                        ${headers.map(header => {
+                          const cellValue = row[header];
+                          const formattedValue = header.toLowerCase().includes('sales')
+                            ? formatSalesValue(cellValue)
+                            : cellValue;
+                          return `
+                            <td class="py-3 px-4 text-sm text-gray-800 border-b border-r border-gray-200 last:border-r-0">
+                              ${formattedValue}
+                            </td>
+                          `;
+                        }).join('')}
                       </tr>
                     `).join('')}
                   </tbody>

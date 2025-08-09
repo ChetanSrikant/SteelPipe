@@ -14,11 +14,11 @@ export default function Sidebar() {
       icon: <FiActivity className="text-lg" />,
       label: "Dashboard",
     },
-    {
-      href: "/overall_dashboard",
-      icon: <FiDatabase className="text-lg" />,
-      label: "Database Dashboard",
-    },
+    // {
+    //   href: "/overall_dashboard",
+    //   icon: <FiDatabase className="text-lg" />,
+    //   label: "Database Dashboard",
+    // },
     {
       href: "/data",
       icon: <FiBarChart2 className="text-lg" />,

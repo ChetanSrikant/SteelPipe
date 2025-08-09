@@ -31,7 +31,7 @@ export default function LoginPage() {
 
       const data = await response.json();
       if (data.success) {
-        router.push('/Dashboard');
+        router.push('/dashboard');
       }
     } catch (err) {
       setError(err.message);
