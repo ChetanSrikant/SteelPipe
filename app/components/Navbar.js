@@ -11,9 +11,12 @@ export default function Navbar() {
           <div className="flex space-x-7">
             <div>
               <Link href="/" className="flex items-center py-4 px-2">
-                <span className="font-semibold text-gray-500 text-lg">
-                  Innodatatics
-                </span>
+                <img
+                  src="/logo.png"
+                  alt="MPL Logo"
+                  className="h-8 w-auto"
+                  style={{ maxHeight: "32px" }}
+                />
               </Link>
             </div>
             <div className="hidden md:flex items-center space-x-1">

@@ -46,8 +46,12 @@ export default function Sidebar() {
     <div className="w-64 bg-white shadow-sm min-h-screen p-4 border-r border-gray-200">
       {/* Logo/Brand */}
       <div className="flex items-center space-x-2 p-4">
-        <div className="h-8 w-8 rounded-full bg-blue-500" />
-        <span className="font-bold">Innodatatics</span>
+        <img
+          src="/Logo.png"
+          alt="MPL Logo"
+          className="h-10 w-auto"
+          style={{ maxHeight: "40px" }}
+        />
       </div>
 
       {/* Navigation */}
